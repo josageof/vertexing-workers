@@ -1,0 +1,7 @@
+# só o que os Dockerfiles copiam entra no contexto do build
+*
+!common/
+!trellis2/
+!paint/
+**/.env*
+**/__pycache__
