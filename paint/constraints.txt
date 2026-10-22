@@ -1,5 +1,5 @@
-# Versıes exatas do ambiente testado no pod (volume RunPod, 21ñ22/10/2026).
-# Usado como -c no pip: sÛ fixa versıes, n„o instala nada sozinho.
+# Vers√µes exatas do ambiente testado no pod (volume RunPod, 21‚Äì22/10/2026).
+# Usado como -c no pip: s√≥ fixa vers√µes, n√£o instala nada sozinho.
 accelerate==1.15.0
 agent_detector==2.0.0
 aiodns==4.0.4
