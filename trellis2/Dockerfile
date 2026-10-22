@@ -32,12 +32,15 @@ RUN pip install --upgrade pip wheel setuptools ninja \
     # atenção esparsa do TRELLIS.2 (sdpa não é aceito lá); --no-deps: não troca o torch
     && pip install xformers==0.0.29.post3 --no-deps --index-url https://download.pytorch.org/whl/cu124
 
+# O Eigen (submódulo do o-voxel e do cubvh) vem do GitLab, que recusa os runners
+# do GitHub por sobrecarga; o espelho no GitHub tem os mesmos commits fixados.
+RUN git config --global url."https://github.com/eigen-mirror/eigen".insteadOf "https://gitlab.com/libeigen/eigen"
+
 ARG TRELLIS_COMMIT=75fbf0183001ed9876c8dbb35de6b68552ee08bd
 RUN git clone https://github.com/microsoft/TRELLIS.2.git /opt/TRELLIS.2 \
     && cd /opt/TRELLIS.2 && git checkout "$TRELLIS_COMMIT" && (for i in 1 2 3 4 5 6; do git submodule update --init --recursive && break; echo "submódulos: tentativa $i falhou"; sleep $((i*30)); done && ! git submodule status --recursive | grep -q "^-")
 
-# Extensões CUDA (a parte demorada do build). Os submódulos têm novas tentativas:
-# o Eigen vem do GitLab, que às vezes recusa por sobrecarga.
+# Extensões CUDA (a parte demorada do build). Submódulos com novas tentativas.
 ARG NVDIFFRAST_COMMIT=253ac4fcea7de5f396371124af597e6cc957bfae
 RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast \
     && cd /tmp/nvdiffrast && git checkout "$NVDIFFRAST_COMMIT" \
