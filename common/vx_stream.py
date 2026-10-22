@@ -9,7 +9,9 @@ junta e confere o hash.
 import base64
 import hashlib
 
-CHUNK = 2_000_000  # bytes por pedaço (~2,7 MB em base64)
+# O /stream descarta em silêncio itens grandes: em 22/10/2026 pedaços de 2,7 MB
+# (base64) sumiam e um de 1,6 MB chegava. 750 kB viram ~1 MB, com folga.
+CHUNK = 750_000
 
 
 def stream_bytes(data: bytes, meta: dict):
