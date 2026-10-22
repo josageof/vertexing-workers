@@ -27,10 +27,11 @@ RUN pip install --upgrade pip wheel setuptools ninja pybind11 \
 ARG HUNYUAN_COMMIT=f8db63096c8282cb27354314d896feba5ba6ff8a
 RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git /opt/Hunyuan3D-2 \
     && cd /opt/Hunyuan3D-2 && git checkout "$HUNYUAN_COMMIT" \
-    # sem a interface web deles e sem torch (já instalado na versão certa)
+    # sem a interface web deles e sem torch (já instalado na versão certa);
+    # o setup.py do hy3dgen pede gradio, por isso --no-deps (o resto já veio)
     && grep -viE '^(gradio|fastapi|uvicorn|torch|torchvision)\b' requirements.txt | tr -d '\r' > /tmp/req.txt \
     && pip install -c /tmp/constraints.txt -r /tmp/req.txt \
-    && pip install -c /tmp/constraints.txt -e . --no-build-isolation \
+    && pip install -e . --no-build-isolation --no-deps \
     && pip install -c /tmp/constraints.txt runpod hf_transfer huggingface_hub
 
 # Extensões do Paint (rasterizador CUDA + processador de malha)
