@@ -52,7 +52,9 @@ RUN git clone https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGEMM \
 RUN pip install /opt/TRELLIS.2/o-voxel --no-build-isolation
 
 # confere na própria imagem que tudo importa (sem GPU: só o import)
-RUN python -c "import torch, cumesh, flex_gemm, o_voxel, nvdiffrast.torch, xformers, runpod, transformers; print('imports ok', torch.__version__, transformers.__version__)"
+# confere que tudo foi instalado sem importar: o runner do GitHub não tem GPU e
+# alguns módulos (Triton) procuram o driver já na importação
+RUN python -c "import importlib.util as u, sys; m=[x for x in 'torch cumesh flex_gemm o_voxel nvdiffrast xformers runpod transformers'.split() if not u.find_spec(x)]; print('faltando:', m) if m else print('módulos ok'); sys.exit(1 if m else 0)"
 
 COPY common/vx_stream.py trellis2/handler.py /app/
 CMD ["python", "-u", "/app/handler.py"]

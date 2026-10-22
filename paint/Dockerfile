@@ -38,7 +38,9 @@ RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git /opt/Hunyuan3D-
 RUN cd /opt/Hunyuan3D-2/hy3dgen/texgen/custom_rasterizer && pip install . --no-build-isolation
 RUN cd /opt/Hunyuan3D-2/hy3dgen/texgen/differentiable_renderer && pip install . --no-build-isolation
 
-RUN python -c "import torch, custom_rasterizer, mesh_processor, runpod, transformers, diffusers; from hy3dgen.texgen import Hunyuan3DPaintPipeline; print('imports ok', torch.__version__, transformers.__version__, diffusers.__version__)"
+# confere que tudo foi instalado sem importar: o runner do GitHub não tem GPU e
+# alguns módulos (Triton) procuram o driver já na importação
+RUN python -c "import importlib.util as u, sys; m=[x for x in 'torch custom_rasterizer mesh_processor runpod transformers diffusers hy3dgen'.split() if not u.find_spec(x)]; print('faltando:', m) if m else print('módulos ok'); sys.exit(1 if m else 0)"
 
 COPY common/vx_stream.py paint/handler.py /app/
 CMD ["python", "-u", "/app/handler.py"]
