@@ -34,20 +34,21 @@ RUN pip install --upgrade pip wheel setuptools ninja \
 
 ARG TRELLIS_COMMIT=75fbf0183001ed9876c8dbb35de6b68552ee08bd
 RUN git clone https://github.com/microsoft/TRELLIS.2.git /opt/TRELLIS.2 \
-    && cd /opt/TRELLIS.2 && git checkout "$TRELLIS_COMMIT" && git submodule update --init --recursive
+    && cd /opt/TRELLIS.2 && git checkout "$TRELLIS_COMMIT" && (for i in 1 2 3 4 5 6; do git submodule update --init --recursive && break; echo "submódulos: tentativa $i falhou"; sleep $((i*30)); done && ! git submodule status --recursive | grep -q "^-")
 
-# Extensões CUDA (a parte demorada do build)
+# Extensões CUDA (a parte demorada do build). Os submódulos têm novas tentativas:
+# o Eigen vem do GitLab, que às vezes recusa por sobrecarga.
 ARG NVDIFFRAST_COMMIT=253ac4fcea7de5f396371124af597e6cc957bfae
 RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/nvdiffrast \
     && cd /tmp/nvdiffrast && git checkout "$NVDIFFRAST_COMMIT" \
     && pip install . --no-build-isolation && rm -rf /tmp/nvdiffrast
 ARG CUMESH_COMMIT=12289e1062f0603f2f0d0771b02e1395d247f26f
 RUN git clone https://github.com/JeffreyXiang/CuMesh.git /tmp/CuMesh \
-    && cd /tmp/CuMesh && git checkout "$CUMESH_COMMIT" && git submodule update --init --recursive \
+    && cd /tmp/CuMesh && git checkout "$CUMESH_COMMIT" && (for i in 1 2 3 4 5 6; do git submodule update --init --recursive && break; echo "submódulos: tentativa $i falhou"; sleep $((i*30)); done && ! git submodule status --recursive | grep -q "^-") \
     && pip install . --no-build-isolation && rm -rf /tmp/CuMesh
 ARG FLEXGEMM_COMMIT=6dd94a859c26ee8246888502eada3dd8ad85532e
 RUN git clone https://github.com/JeffreyXiang/FlexGEMM.git /tmp/FlexGEMM \
-    && cd /tmp/FlexGEMM && git checkout "$FLEXGEMM_COMMIT" && git submodule update --init --recursive \
+    && cd /tmp/FlexGEMM && git checkout "$FLEXGEMM_COMMIT" && (for i in 1 2 3 4 5 6; do git submodule update --init --recursive && break; echo "submódulos: tentativa $i falhou"; sleep $((i*30)); done && ! git submodule status --recursive | grep -q "^-") \
     && pip install . --no-build-isolation && rm -rf /tmp/FlexGEMM
 RUN pip install /opt/TRELLIS.2/o-voxel --no-build-isolation
 
