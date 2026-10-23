@@ -22,7 +22,7 @@ COPY paint/constraints.txt /tmp/constraints.txt
 RUN pip install --upgrade pip wheel setuptools \
     && pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124 \
     && pip install -c /tmp/constraints.txt diffusers transformers accelerate einops omegaconf pyyaml tqdm \
-       numpy trimesh pymeshlab pygltflib scikit-image opencv-python-headless rembg onnxruntime \
+       numpy trimesh pymeshlab pygltflib scikit-image opencv-python-headless rembg onnxruntime timm \
        runpod hf_transfer huggingface_hub
 
 ARG HUNYUAN21_COMMIT=82920d643c0dc2f7bfd7255f45f62d386edfe60c
@@ -31,7 +31,9 @@ RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git /opt/Hunyuan3
     # só a forma: o resto (textura PBR, demos) não é usado
     && rm -rf hy3dpaint assets docker gradio_app.py
 
-RUN cd /opt/Hunyuan3D-2.1/hy3dshape && python -c "import hy3dshape; from hy3dshape.pipelines import retrieve_timesteps; from hy3dshape.surface_loaders import SharpEdgeSurfaceLoader; from hy3dshape.rembg import BackgroundRemover; import runpod; print('imports ok')"
+# o DiT é importado pelo nome no config (hunyuandit -> timm): importa todos os
+# modelos aqui, senão a falta de pacote só aparece no worker
+RUN cd /opt/Hunyuan3D-2.1/hy3dshape && python -c "import hy3dshape, hy3dshape.models, hy3dshape.models.denoisers.hunyuandit, hy3dshape.models.denoisers.hunyuan3ddit; from hy3dshape.pipelines import retrieve_timesteps; from hy3dshape.surface_loaders import SharpEdgeSurfaceLoader; from hy3dshape.rembg import BackgroundRemover; import runpod; print('imports ok')"
 
 COPY common/vx_stream.py refine/handler.py /app/
 CMD ["python", "-u", "/app/handler.py"]
