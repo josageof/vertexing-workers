@@ -25,7 +25,8 @@ RUN pip install --upgrade pip wheel setuptools \
        numpy trimesh pymeshlab pygltflib scikit-image opencv-python-headless rembg onnxruntime timm \
        runpod hf_transfer huggingface_hub
 # amostragem por ponto mais distante do codificador do VAE (roda de verdade aqui, na CPU)
-RUN pip install torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.6.0+cu124.html \n    && python -c "import torch; from torch_cluster import fps; print('fps ok', fps(torch.rand(100, 3), ratio=0.1).shape)"
+RUN pip install torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.6.0+cu124.html \
+    && python -c "import torch; from torch_cluster import fps; print('fps ok', fps(torch.rand(100, 3), ratio=0.1).shape)"
 
 ARG HUNYUAN21_COMMIT=82920d643c0dc2f7bfd7255f45f62d386edfe60c
 RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git /opt/Hunyuan3D-2.1 \
