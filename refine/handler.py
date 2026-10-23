@@ -43,6 +43,7 @@ import trimesh  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from vx_stream import stream_bytes  # noqa: E402
+from vx_surface import surface_points  # noqa: E402
 
 REPO = "tencent/Hunyuan3D-2.1"
 _CACHE_ROOTS = ["/runpod-volume/huggingface-cache/hub", "/runpod/cache/huggingface/hub"]
@@ -110,10 +111,7 @@ def _image(b64: str) -> Image.Image:
 def _encode(pipe, mesh: trimesh.Trimesh) -> torch.Tensor:
     """Malha -> latente "limpo" (sigma 1 no agendamento do Hunyuan), do jeito do
     minimal_vae_demo oficial: 81.920 pontos com normal, sem pontos de quina."""
-    from hy3dshape.surface_loaders import SharpEdgeSurfaceLoader
-
-    loader = SharpEdgeSurfaceLoader(num_sharp_points=0, num_uniform_points=81920)
-    surface = loader(mesh).to(pipe.device, dtype=pipe.dtype)
+    surface = surface_points(mesh, 81920).to(pipe.device, dtype=pipe.dtype)
     latents = pipe.vae.encode(surface, sample_posterior=False)
     return latents * pipe.vae.scale_factor
 
