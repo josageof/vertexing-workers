@@ -38,5 +38,8 @@ RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git /opt/Hunyuan3
 # modelos aqui, senão a falta de pacote só aparece no worker
 RUN cd /opt/Hunyuan3D-2.1/hy3dshape && python -c "import hy3dshape, hy3dshape.models, hy3dshape.models.denoisers.hunyuandit, hy3dshape.models.denoisers.hunyuan3ddit; from hy3dshape.pipelines import retrieve_timesteps; from hy3dshape.surface_loaders import SharpEdgeSurfaceLoader; from hy3dshape.rembg import BackgroundRemover; import runpod; print('imports ok')"
 
+COPY refine/smoke_test.py /tmp/smoke_test.py
+RUN python /tmp/smoke_test.py
+
 COPY common/vx_stream.py refine/handler.py /app/
 CMD ["python", "-u", "/app/handler.py"]
