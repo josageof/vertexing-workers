@@ -2,6 +2,7 @@
 *
 !common/
 !trellis2/
+!refine/
 !paint/
 **/.env*
 **/__pycache__
