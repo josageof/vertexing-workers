@@ -7,6 +7,7 @@ publicados como imagens no Docker Hub pelo GitHub Actions.
 |---|---|---|
 | `josageof/vertexing-trellis2` | imagem → malha 3D (TRELLIS.2 1024, remalhada, cor por vértice) | `microsoft/TRELLIS.2-4B` |
 | `josageof/vertexing-paint` | malha + imagem → GLB com textura (Hunyuan3D-Paint) | `tencent/Hunyuan3D-2` |
+| `josageof/vertexing-views` | foto da frente → outras vistas (Qwen-Image-Edit-2511 + LoRAs de ângulo e Lightning; GPU de 80 GB, ou 48 GB com offload) | `Qwen/Qwen-Image-Edit-2511` |
 
 As imagens não contêm pesos nem chaves. O resultado volta em pedaços pela
 própria resposta do RunPod (`common/vx_stream.py`, lido via `/stream`).
@@ -27,3 +28,4 @@ própria resposta do RunPod (`common/vx_stream.py`, lido via `/stream`).
 - Hunyuan3D-2 (Tencent Hunyuan 3D Community License): proíbe uso na União
   Europeia, Reino Unido e Coreia do Sul; acima de 1 milhão de usuários ativos
   por mês exige licença comercial da Tencent. Os pesos não estão na imagem.
+- Qwen-Image-Edit-2511, LoRA Multiple-Angles (fal) e Lightning (lightx2v): Apache-2.0.

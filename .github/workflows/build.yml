@@ -6,7 +6,7 @@ name: build-images
 on:
   push:
     branches: [main]
-    paths: ["trellis2/**", "paint/**", "common/**", ".github/workflows/build.yml"]
+    paths: ["trellis2/**", "paint/**", "views/**", "common/**", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         # refine (Hunyuan3D-2.1) testado em 24/10/2026 sem ganho: fora do build
-        worker: [trellis2, paint]
+        worker: [trellis2, paint, views]
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +25,7 @@ jobs:
         run: |
           if find . -path ./.git -prune -o -name '.env*' -print | grep -q .; then
             echo "::error::arquivo .env no repositório"; exit 1; fi
-          if grep -rIEn '(rps_[A-Za-z0-9]{8,}|r8_[A-Za-z0-9]{20,}|user_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{30,})' common trellis2 paint refine; then
+          if grep -rIEn '(rps_[A-Za-z0-9]{8,}|r8_[A-Za-z0-9]{20,}|user_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{30,})' common trellis2 paint refine views; then
             echo "::error::parece haver uma chave no código"; exit 1; fi
 
       # o runner tem ~14 GB livres; a imagem com CUDA devel passa disso
