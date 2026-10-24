@@ -19,6 +19,8 @@ Entrada (job["input"]):
                    costas, 270 direita); padrão 0/90/180/270 com 4 imagens
   front_weight     peso da frente na combinação (padrão 1)
   views_t_min      abaixo deste t (1 = ruído, 0 = fim) só a frente conta (padrão 0)
+  dino_lock        DINO-Lock do fork ComfyUI-Trellis2 (0 = desligado; o fork usa 0,65)
+  dino_substeps    subpassos nos primeiros 40 % com dino_lock (padrão 4)
   seed             int (padrão 42)
   pipeline_type    "512" | "1024" | "1024_cascade" | "1536_cascade" (padrão 1024_cascade)
   steps, guidance  opcionais (passos/guiança da forma)
@@ -32,7 +34,7 @@ e depois {"type":"chunk", i, data}. format "npz" = vertices (Z pra cima, cubo
 import base64
 import inspect
 import io
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import os
 import sys
 import time
@@ -254,6 +256,68 @@ def _multi_image(pipe, images: list, mode: str = "average", azimuths: list | Non
             del s._inference_model
 
 
+def _lock_strength(i: int, steps: int, base: float, cap: float) -> float:
+    """Agenda do DINO-Lock: cap nos primeiros 40 % dos passos, rampa cosseno
+    até base entre 40 e 70 %, base no resto."""
+    found_end, ramp_end = int(steps * 0.4), int(steps * 0.7)
+    if i < found_end:
+        return cap
+    if i >= ramp_end:
+        return base
+    blend = 0.5 * (1.0 - np.cos(np.pi * (i - found_end) / max(1, ramp_end - found_end)))
+    return float(cap + (base - cap) * blend)
+
+
+@contextmanager
+def _dino_lock(pipe, strength: float, substeps: int = 4, cap: float = 0.92):
+    """DINO-Lock do fork ComfyUI-Trellis2 (visualbruno, MIT; DinoLockMixin em
+    trellis2/pipelines/samplers/flow_euler.py), portado sem mudar o
+    comportamento. Apesar do nome, é uma agenda de guiança: a cada passo
+    mistura a velocidade com CFG e a só condicionada (guiança 1) — o que
+    equivale a baixar a CFG —, suaviza a velocidade entre passos (EMA 0,85)
+    e, nos primeiros 40 %, integra em `substeps` subpassos de Euler (esses
+    subpassos usam a CFG cheia, como no original). Vale para os três
+    estágios; chama s._inference_model, então combina com _multi_image."""
+    samplers = {id(s): s for s in (pipe.sparse_structure_sampler, pipe.shape_slat_sampler, pipe.tex_slat_sampler)}
+    for s in samplers.values():
+
+        @torch.no_grad()
+        def sample(model, noise, cond=None, neg_cond=None, steps=50, rescale_t=1.0, guidance_strength=3.0,
+                   guidance_interval=(0.0, 1.0), verbose=True, tqdm_desc="Sampling", _s=s, **kwargs):
+            from easydict import EasyDict as edict
+
+            kw = {**kwargs, "neg_cond": neg_cond, "guidance_strength": guidance_strength,
+                  "guidance_interval": guidance_interval}
+            u = np.linspace(1, 0, steps + 1)
+            ts = (rescale_t * u / (1 + (rescale_t - 1) * u)).tolist()
+            x, v_ema = noise, None
+            for i in range(steps):
+                t, t_prev = ts[i], ts[i + 1]
+                lock = _lock_strength(i, steps, strength, cap)
+                guided = _s._inference_model(model, x, t, cond, **kw)
+                cfg_on = guidance_strength != 1 and guidance_interval[0] <= t <= guidance_interval[1]
+                # fora do intervalo da guiança as duas são iguais: poupa uma passada
+                pos = _s._inference_model(model, x, t, cond, **{**kw, "guidance_strength": 1.0}) if cfg_on else guided
+                v = (1.0 - lock) * guided + lock * pos if lock > 0 else guided
+                if v_ema is not None:
+                    v = 0.85 * v + 0.15 * v_ema
+                v_ema = v
+                if substeps > 1 and lock >= 0.9:
+                    dt = (t - t_prev) / substeps
+                    for k in range(substeps):
+                        x = x - dt * _s._inference_model(model, x, t - k * dt, cond, **kw)
+                else:
+                    x = x - (t - t_prev) * v
+            return edict({"samples": x})
+
+        s.sample = sample
+    try:
+        yield
+    finally:
+        for s in samplers.values():
+            del s.sample
+
+
 def _run_trellis2(inp: dict, timings: dict):
     pipe = _trellis2()
     image = _image(inp["image"])
@@ -272,6 +336,14 @@ def _run_trellis2(inp: dict, timings: dict):
         wanted["shape_slat_sampler_params"] = shape
         wanted["sparse_structure_sampler_params"] = {k: v for k, v in shape.items() if k == "steps"}
     t0 = time.time()
+    lock = float(inp.get("dino_lock", 0.0))
+    with (_dino_lock(pipe, lock, int(inp.get("dino_substeps", 4))) if lock > 0 else nullcontext()):
+        mesh = _generate(pipe, image, extra_images, inp, wanted, timings)
+    timings["generate_s"] = round(time.time() - t0, 1)
+    return _finish(mesh, inp, timings)
+
+
+def _generate(pipe, image, extra_images: list, inp: dict, wanted: dict, timings: dict):
     if extra_images:
         views = [image, *extra_images]
         if wanted["preprocess_image"]:  # o run() só preprocessaria a primeira
@@ -289,8 +361,10 @@ def _run_trellis2(inp: dict, timings: dict):
         timings["views"] = len(views)
     else:
         mesh = pipe.run(image, **_kwargs_for(pipe.run, wanted))[0]
-    timings["generate_s"] = round(time.time() - t0, 1)
+    return mesh
 
+
+def _finish(mesh, inp: dict, timings: dict):
     t0 = time.time()
     raw_faces = int(mesh.faces.shape[0])
     target = int(inp.get("decimation_target", 1_000_000))
