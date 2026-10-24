@@ -13,6 +13,12 @@ Entrada (job["input"]):
                    ângulos (a primeira é a frente). Multidifusão do TRELLIS v1: a
                    cada passo o modelo prevê com cada imagem e usa a média (sem
                    pose de câmera); custa ~N vezes o tempo de geração
+  views_mode       com images: "average" (padrão) | "structure" (extras só no
+                   volume) | "spatial" (cada foto manda no lado que mostra)
+  view_azimuths    graus de cada imagem (0 frente, 90 esquerda do objeto, 180
+                   costas, 270 direita); padrão 0/90/180/270 com 4 imagens
+  front_weight     peso da frente na combinação (padrão 1)
+  views_t_min      abaixo deste t (1 = ruído, 0 = fim) só a frente conta (padrão 0)
   seed             int (padrão 42)
   pipeline_type    "512" | "1024" | "1024_cascade" | "1536_cascade" (padrão 1024_cascade)
   steps, guidance  opcionais (passos/guiança da forma)
@@ -123,33 +129,128 @@ def _image(b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGBA")
 
 
+def _view_dirs(azimuths: list) -> torch.Tensor:
+    """Direção (x, y, z do latente, Z pra cima) do lado do objeto que cada
+    foto mostra. O TRELLIS.2 gera no referencial do próprio objeto, não da
+    câmera: a frente fica em -Y e a esquerda do objeto em +X (conferido no
+    GLB do Titã). Azimute em graus: 0 frente, 90 esquerda, 180 costas, 270 direita."""
+    a = torch.tensor([float(x) for x in azimuths]) * torch.pi / 180
+    return torch.stack([torch.sin(a), -torch.cos(a), torch.zeros_like(a)], 1)
+
+
+def _surface_normals(coords: torch.Tensor) -> torch.Tensor:
+    """Normal aproximada de cada voxel do latente esparso (só a casca da
+    superfície): preenche o interior (o que não se alcança da borda da grade
+    andando por voxels vazios), borra o sólido e pega o gradiente. Onde a
+    casca tem furo o preenchimento vaza; por isso soma um pouco da direção
+    radial (a partir do eixo vertical), que nunca é nula longe do eixo."""
+    import torch.nn.functional as F
+
+    c = coords[:, 1:].long()
+    c = c - c.min(0).values + 2
+    size = [int(x) + 3 for x in c.max(0).values]
+    occ = torch.zeros(size, dtype=torch.bool, device=c.device)
+    occ[c[:, 0], c[:, 1], c[:, 2]] = True
+    out = torch.zeros_like(occ)
+    for border in (out[0], out[-1], out[:, 0], out[:, -1], out[:, :, 0], out[:, :, -1]):
+        border.fill_(True)
+    out &= ~occ
+    cross = torch.zeros(1, 1, 3, 3, 3, device=c.device)
+    cross[0, 0, 1, 1, :] = cross[0, 0, 1, :, 1] = cross[0, 0, :, 1, 1] = 1  # 6 vizinhos
+    for _ in range(sum(size)):
+        grown = (F.conv3d(out[None, None].float(), cross, padding=1)[0, 0] > 0) & ~occ
+        if torch.equal(grown, out):
+            break
+        out = grown
+    solid = (~out).float()[None, None]
+    for _ in range(2):
+        solid = F.avg_pool3d(solid, 5, 1, 2, count_include_pad=False)
+    grads = torch.gradient(solid[0, 0])
+    n = -torch.stack([g[c[:, 0], c[:, 1], c[:, 2]] for g in grads], 1)
+    n = n / n.norm(dim=1, keepdim=True).clamp_min(1e-6)
+    radial = c.float() - c.float().mean(0)
+    radial[:, 2] = 0
+    radial = radial / radial.norm(dim=1, keepdim=True).clamp_min(1e-6)
+    n = n + 0.25 * radial
+    return n / n.norm(dim=1, keepdim=True).clamp_min(1e-6)
+
+
+def _spatial_weights(coords: torch.Tensor, dirs: torch.Tensor, prior: torch.Tensor) -> torch.Tensor:
+    """Peso (voxels x fotos, soma 1 por voxel) de cada foto em cada voxel:
+    cos² entre a normal e o lado que a foto mostra, mais um piso pequeno pra
+    o que nenhuma foto vê de frente (topo da cabeça, sola), vezes o peso
+    a priori de cada foto (front_weight)."""
+    n = _surface_normals(coords)
+    cos = (n @ dirs.to(n).T).clamp_min(0)
+    w = (cos ** 2 + 0.05) * prior.to(n)
+    return w / w.sum(1, keepdim=True)
+
+
 @contextmanager
-def _multi_image(pipe, images: list):
+def _multi_image(pipe, images: list, mode: str = "average", azimuths: list | None = None,
+                 front_weight: float = 1.0, t_min: float = 0.0):
     """run() só aceita uma imagem: o get_cond passa a devolver o
-    condicionamento de todas, e nos três amostradores (estrutura, forma,
-    textura) a previsão de cada passo vira a média das previsões por imagem —
-    o modo "multidiffusion" do run_multi_image do TRELLIS v1. A guiança é
-    linear, então fazer a média depois dela dá o mesmo resultado."""
+    condicionamento de todas, e nos amostradores a previsão de cada passo
+    vira uma combinação das previsões por imagem — o "multidiffusion" do
+    run_multi_image do TRELLIS v1. A guiança é linear, então combinar depois
+    dela dá o mesmo resultado. Modos:
+      average    média em estrutura, forma e textura (teste 4a)
+      structure  fotos extras só na estrutura esparsa (volume/silhueta);
+                 forma fina e textura só com a frente
+      spatial    estrutura pela média; forma e textura com peso por voxel
+                 conforme o lado pra onde a superfície aponta (cada foto
+                 manda no lado que ela mostra)
+    front_weight multiplica o peso da frente; abaixo de t_min (t vai de 1,
+    ruído, a 0) só a frente conta — as extras moldam só o começo."""
     n = len(images)
+    if azimuths is None:
+        azimuths = [0, 90, 180, 270] if n == 4 else [360 * i / n for i in range(n)]
+    if len(azimuths) != n:
+        raise ValueError(f"view_azimuths tem {len(azimuths)} valores para {n} imagens")
+    dirs = _view_dirs(azimuths)
+    prior = torch.ones(n)
+    prior[0] = float(front_weight)
     get_cond = pipe.get_cond
     pipe.get_cond = lambda image, resolution, include_neg_cond=True: get_cond(images, resolution, include_neg_cond)
-    samplers = {id(s): s for s in (pipe.sparse_structure_sampler, pipe.shape_slat_sampler, pipe.tex_slat_sampler)}
-    for s in samplers.values():
+    stages = {"structure": pipe.sparse_structure_sampler, "shape": pipe.shape_slat_sampler,
+              "texture": pipe.tex_slat_sampler}
+    patched = {}
+    for stage, s in stages.items():
+        if id(s) in patched:
+            if mode == "average":
+                continue
+            raise RuntimeError("amostradores compartilhados entre estágios: o modo por estágio não se aplica")
         single = s._inference_model
+        only_front = mode == "structure" and stage != "structure"
+        spatial = mode == "spatial" and stage != "structure"
+        cache: dict = {}
 
-        def averaged(model, x_t, t, cond=None, _single=single, neg_cond=None, **kwargs):
-            preds = []
-            for i in range(n):
+        def combined(model, x_t, t, cond=None, _single=single, _front=only_front, _spatial=spatial,
+                     _cache=cache, neg_cond=None, **kwargs):
+            def pred(i):
                 extra = {"neg_cond": neg_cond[i:i + 1]} if neg_cond is not None else {}
-                preds.append(_single(model, x_t, t, cond[i:i + 1], **extra, **kwargs))
-            return sum(preds) / n
+                return _single(model, x_t, t, cond[i:i + 1], **extra, **kwargs)
 
-        s._inference_model = averaged
+            if _front or t < t_min:
+                return pred(0)
+            if not _spatial:
+                return sum(pred(i) * float(prior[i]) for i in range(n)) / float(prior.sum())
+            # as coordenadas não mudam ao longo da amostragem de um estágio
+            key = (x_t.coords.data_ptr(), tuple(x_t.coords.shape))
+            if key not in _cache:
+                _cache.clear()
+                _cache[key] = _spatial_weights(x_t.coords, dirs, prior)
+            w = _cache[key].to(x_t.feats.dtype)
+            feats = sum(pred(i).feats * w[:, i:i + 1] for i in range(n))
+            return x_t.replace(feats)
+
+        s._inference_model = combined
+        patched[id(s)] = s
     try:
         yield
     finally:
         del pipe.get_cond
-        for s in samplers.values():
+        for s in patched.values():
             del s._inference_model
 
 
@@ -175,7 +276,15 @@ def _run_trellis2(inp: dict, timings: dict):
         views = [image, *extra_images]
         if wanted["preprocess_image"]:  # o run() só preprocessaria a primeira
             views = [pipe.preprocess_image(v) for v in views]
-        with _multi_image(pipe, views):
+        mv = {
+            "mode": inp.get("views_mode", "average"),
+            "azimuths": inp.get("view_azimuths"),
+            "front_weight": float(inp.get("front_weight", 1.0)),
+            "t_min": float(inp.get("views_t_min", 0.0)),
+        }
+        if mv["mode"] not in ("average", "structure", "spatial"):
+            raise ValueError(f"views_mode inválido: {mv['mode']}")
+        with _multi_image(pipe, views, **mv):
             mesh = pipe.run(views[0], **_kwargs_for(pipe.run, {**wanted, "preprocess_image": False}))[0]
         timings["views"] = len(views)
     else:
