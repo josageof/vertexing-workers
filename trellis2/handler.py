@@ -9,6 +9,10 @@ qualquer data center.
 
 Entrada (job["input"]):
   image            PNG/JPG em base64
+  images           opcional: lista de PNG/JPG em base64 do MESMO objeto por outros
+                   ângulos (a primeira é a frente). Multidifusão do TRELLIS v1: a
+                   cada passo o modelo prevê com cada imagem e usa a média (sem
+                   pose de câmera); custa ~N vezes o tempo de geração
   seed             int (padrão 42)
   pipeline_type    "512" | "1024" | "1024_cascade" | "1536_cascade" (padrão 1024_cascade)
   steps, guidance  opcionais (passos/guiança da forma)
@@ -22,6 +26,7 @@ e depois {"type":"chunk", i, data}. format "npz" = vertices (Z pra cima, cubo
 import base64
 import inspect
 import io
+from contextlib import contextmanager
 import os
 import sys
 import time
@@ -118,9 +123,40 @@ def _image(b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGBA")
 
 
+@contextmanager
+def _multi_image(pipe, images: list):
+    """run() só aceita uma imagem: o get_cond passa a devolver o
+    condicionamento de todas, e nos três amostradores (estrutura, forma,
+    textura) a previsão de cada passo vira a média das previsões por imagem —
+    o modo "multidiffusion" do run_multi_image do TRELLIS v1. A guiança é
+    linear, então fazer a média depois dela dá o mesmo resultado."""
+    n = len(images)
+    get_cond = pipe.get_cond
+    pipe.get_cond = lambda image, resolution, include_neg_cond=True: get_cond(images, resolution, include_neg_cond)
+    samplers = {id(s): s for s in (pipe.sparse_structure_sampler, pipe.shape_slat_sampler, pipe.tex_slat_sampler)}
+    for s in samplers.values():
+        single = s._inference_model
+
+        def averaged(model, x_t, t, cond=None, _single=single, neg_cond=None, **kwargs):
+            preds = []
+            for i in range(n):
+                extra = {"neg_cond": neg_cond[i:i + 1]} if neg_cond is not None else {}
+                preds.append(_single(model, x_t, t, cond[i:i + 1], **extra, **kwargs))
+            return sum(preds) / n
+
+        s._inference_model = averaged
+    try:
+        yield
+    finally:
+        del pipe.get_cond
+        for s in samplers.values():
+            del s._inference_model
+
+
 def _run_trellis2(inp: dict, timings: dict):
     pipe = _trellis2()
     image = _image(inp["image"])
+    extra_images = [_image(b) for b in inp.get("images") or []]
     shape = {}
     if inp.get("steps"):
         shape["steps"] = int(inp["steps"])
@@ -135,7 +171,15 @@ def _run_trellis2(inp: dict, timings: dict):
         wanted["shape_slat_sampler_params"] = shape
         wanted["sparse_structure_sampler_params"] = {k: v for k, v in shape.items() if k == "steps"}
     t0 = time.time()
-    mesh = pipe.run(image, **_kwargs_for(pipe.run, wanted))[0]
+    if extra_images:
+        views = [image, *extra_images]
+        if wanted["preprocess_image"]:  # o run() só preprocessaria a primeira
+            views = [pipe.preprocess_image(v) for v in views]
+        with _multi_image(pipe, views):
+            mesh = pipe.run(views[0], **_kwargs_for(pipe.run, {**wanted, "preprocess_image": False}))[0]
+        timings["views"] = len(views)
+    else:
+        mesh = pipe.run(image, **_kwargs_for(pipe.run, wanted))[0]
     timings["generate_s"] = round(time.time() - t0, 1)
 
     t0 = time.time()
