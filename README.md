@@ -1,23 +1,26 @@
 # vertexing-workers
 
-Workers GPU do [Vertexing](https://github.com/josageof) para o RunPod Serverless,
-publicados como imagens no Docker Hub pelo GitHub Actions.
+Worker GPU do [Vertexing](https://github.com/josageof) para o RunPod Serverless,
+publicado como imagem no Docker Hub pelo GitHub Actions.
 
 | Imagem | O que faz | Pesos (cache de modelos do RunPod) |
 |---|---|---|
-| `josageof/vertexing-trellis2` | imagem → malha 3D (TRELLIS.2 1024, remalhada, cor por vértice) | `microsoft/TRELLIS.2-4B` |
-| `josageof/vertexing-paint` | malha + imagem → GLB com textura (Hunyuan3D-Paint) | `tencent/Hunyuan3D-2` |
-| `josageof/vertexing-views` | foto da frente → outras vistas (Qwen-Image-Edit-2511 + LoRAs de ângulo e Lightning; GPU de 80 GB, ou 48 GB com offload) | `Qwen/Qwen-Image-Edit-2511` |
+| `josageof/vertexing-trellis2` | imagem (ou fotos reais de vários ângulos) → malha 3D com textura (TRELLIS.2 1024_cascade + to_glb) | `microsoft/TRELLIS.2-4B` |
 
-As imagens não contêm pesos nem chaves. O resultado volta em pedaços pela
+A imagem não contém pesos nem chaves. O resultado volta em pedaços pela
 própria resposta do RunPod (`common/vx_stream.py`, lido via `/stream`).
+
+Testados e removidos em 24/10/2026, sem ganho sobre o TRELLIS.2 (histórico no
+git): textura Hunyuan3D-Paint (`paint/`), refino de forma com Hunyuan3D-2.1
+(`refine/`), vistas geradas por Qwen-Image-Edit (`views/`), DINO-Lock e os
+modos de várias fotos por média simples.
 
 ## Endpoint (RunPod → Serverless → New Endpoint → Docker image)
 
-- Container image: `josageof/vertexing-trellis2:latest` (ou `-paint`)
+- Container image: `josageof/vertexing-trellis2:<sha do commit>`
 - Container start command: vazio (usa o `CMD` da imagem)
 - Cached model: o da tabela acima
-- GPUs: 24 GB e 24 GB PRO (e 16 GB para o TRELLIS.2); qualquer data center
+- GPUs: 24 GB e 24 GB PRO (e 16 GB); qualquer data center
 - Sem network volume
 
 ## Licenças
@@ -25,7 +28,3 @@ própria resposta do RunPod (`common/vx_stream.py`, lido via `/stream`).
 - Código deste repositório: MIT.
 - TRELLIS.2 (microsoft/TRELLIS.2): MIT. BiRefNet: MIT. DINOv3: licença da Meta
   (baixado na partida, não redistribuído aqui).
-- Hunyuan3D-2 (Tencent Hunyuan 3D Community License): proíbe uso na União
-  Europeia, Reino Unido e Coreia do Sul; acima de 1 milhão de usuários ativos
-  por mês exige licença comercial da Tencent. Os pesos não estão na imagem.
-- Qwen-Image-Edit-2511, LoRA Multiple-Angles (fal) e Lightning (lightx2v): Apache-2.0.
